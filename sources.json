@@ -39,9 +39,9 @@
     "discover":true,
     "watch_terms":["birthday","baby","new arrival","debut","baby shower","cub","pup","calf","kid","hatching"]
   },
-  {"id":"savannah_city","name":"City of Savannah Calendar","type":"official","tier":1,"url":"https://savannahga.gov/calendar.aspx","discover":true},
+  {"id":"savannah_city","name":"City of Savannah Calendar","type":"official","tier":1,"parser":"civic","url":"https://savannahga.gov/calendar.aspx","discover":true},
   {"id":"savannah_special_events","name":"Savannah Special Event Calendar","type":"official","tier":1,"url":"https://www.savannahga.gov/3271/Special-Event-Calendar","discover":true},
-  {"id":"richmond_hill_city","name":"City of Richmond Hill Calendar","type":"official","tier":1,"url":"https://richmondhill-ga.gov/calendar.aspx?CID=0&view=list","discover":true},
+  {"id":"richmond_hill_city","name":"City of Richmond Hill Calendar","type":"official","tier":1,"parser":"civic","url":"https://richmondhill-ga.gov/calendar.aspx?CID=0&view=list","discover":true},
   {"id":"visit_savannah","name":"Visit Savannah","type":"calendar","tier":1,"url":"https://www.visitsavannah.com/events","discover":true},
   {"id":"visit_tybee","name":"Visit Tybee","type":"calendar","tier":1,"url":"https://visittybee.com/events","discover":true},
   {"id":"visit_pooler","name":"Visit Pooler","type":"calendar","tier":1,"url":"https://www.visitpooler.com/events/","discover":true},
