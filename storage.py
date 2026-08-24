@@ -40,6 +40,8 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS social_captures (id TEXT PRIMARY KEY,platform TEXT NOT NULL,source_url TEXT NOT NULL,post_url TEXT,source_name TEXT,text TEXT NOT NULL,media_json TEXT NOT NULL DEFAULT '[]',captured_at TEXT NOT NULL,last_seen TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new');
                 CREATE INDEX IF NOT EXISTS idx_social_last_seen ON social_captures(last_seen DESC);
                 CREATE INDEX IF NOT EXISTS idx_social_status ON social_captures(status);
+                CREATE TABLE IF NOT EXISTS social_analysis (capture_id TEXT PRIMARY KEY,status TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',event_id TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(capture_id) REFERENCES social_captures(id));
+                CREATE INDEX IF NOT EXISTS idx_social_analysis_status ON social_analysis(status);
             """)
 
     def seed_events(self, seed_path: Path):
@@ -64,6 +66,7 @@ class Storage:
                 old["sources"]=list(old_sources.values())
                 if len(event.get("description",""))>len(old.get("description","")): old["description"]=event.get("description")
                 old["score"]=max(float(old.get("score",0)),float(event.get("score",0)))
+                if event.get("whyGood") and not old.get("whyGood"): old["whyGood"]=event.get("whyGood")
                 conn.execute("UPDATE events SET payload=?,updated_at=? WHERE id=?",(json.dumps(old,ensure_ascii=False),now_iso(),existing["id"])); return False
             conn.execute("INSERT INTO events(id,start_date,title_key,payload,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET start_date=excluded.start_date,title_key=excluded.title_key,payload=excluded.payload,updated_at=excluded.updated_at",(event_id,start_date,title_key,json.dumps(event,ensure_ascii=False),now_iso()))
         return True
@@ -89,14 +92,44 @@ class Storage:
         if platform not in {"facebook","instagram"} or not source_url or len(text)<12: return {"saved":False,"reason":"invalid"}
         key=post_url or (source_url+"|"+text[:1200]); capture_id=hashlib.sha256(key.encode("utf-8",errors="ignore")).hexdigest()[:32]; ts=now_iso()
         with self.connect() as conn:
-            exists=conn.execute("SELECT id FROM social_captures WHERE id=?",(capture_id,)).fetchone()
+            exists=conn.execute("SELECT id,status FROM social_captures WHERE id=?",(capture_id,)).fetchone()
             conn.execute("INSERT INTO social_captures(id,platform,source_url,post_url,source_name,text,media_json,captured_at,last_seen,status) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,text=CASE WHEN length(excluded.text)>length(social_captures.text) THEN excluded.text ELSE social_captures.text END,media_json=excluded.media_json",(capture_id,platform,source_url,post_url or None,source_name or None,text[:50000],json.dumps(media[:20],ensure_ascii=False),ts,ts,"new"))
         return {"saved":not bool(exists),"duplicate":bool(exists),"id":capture_id}
 
+    def pending_social_captures(self,limit=8):
+        with self.connect() as conn:
+            rows=conn.execute("SELECT * FROM social_captures WHERE status IN ('new','error') ORDER BY captured_at ASC LIMIT ?",(int(limit),)).fetchall()
+        out=[]
+        for row in rows:
+            item=dict(row)
+            try: item["media"]=json.loads(item.pop("media_json") or "[]")
+            except json.JSONDecodeError: item["media"]=[]
+            out.append(item)
+        return out
+
+    def mark_social_analysis(self,capture_id:str,status:str,result:dict,event_id=None):
+        ts=now_iso()
+        with self.connect() as conn:
+            conn.execute("UPDATE social_captures SET status=? WHERE id=?",(status,capture_id))
+            conn.execute("INSERT INTO social_analysis(capture_id,status,result_json,event_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(capture_id) DO UPDATE SET status=excluded.status,result_json=excluded.result_json,event_id=excluded.event_id,updated_at=excluded.updated_at",(capture_id,status,json.dumps(result,ensure_ascii=False),event_id,ts))
+
+    def list_social_analysis(self,limit=30):
+        with self.connect() as conn:
+            rows=conn.execute("SELECT a.capture_id,a.status,a.result_json,a.event_id,a.updated_at,c.platform,c.source_name,c.source_url,c.post_url FROM social_analysis a JOIN social_captures c ON c.id=a.capture_id ORDER BY a.updated_at DESC LIMIT ?",(int(limit),)).fetchall()
+        out=[]
+        for row in rows:
+            item=dict(row)
+            try: item["result"]=json.loads(item.pop("result_json") or "{}")
+            except json.JSONDecodeError: item["result"]={}
+            out.append(item)
+        return out
+
     def social_stats(self):
         with self.connect() as conn:
-            total=conn.execute("SELECT COUNT(*) AS n FROM social_captures").fetchone()["n"]; new=conn.execute("SELECT COUNT(*) AS n FROM social_captures WHERE status='new'").fetchone()["n"]; last=conn.execute("SELECT max(last_seen) AS ts FROM social_captures").fetchone()["ts"]
-        return {"captures":total,"new":new,"last_capture":last}
+            total=conn.execute("SELECT COUNT(*) AS n FROM social_captures").fetchone()["n"]
+            counts={row["status"]:row["n"] for row in conn.execute("SELECT status,COUNT(*) AS n FROM social_captures GROUP BY status").fetchall()}
+            last=conn.execute("SELECT max(last_seen) AS ts FROM social_captures").fetchone()["ts"]
+        return {"captures":total,"new":counts.get("new",0),"published":counts.get("published",0),"review":counts.get("review",0),"ignored":counts.get("ignored",0),"errors":counts.get("error",0),"last_capture":last}
 
     def update_source_status(self,source_id:str,status:str,detail="",events_found=0,signals_found=0):
         checked=now_iso(); success=checked if status=="ok" else None
