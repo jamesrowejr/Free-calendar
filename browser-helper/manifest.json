@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Free Calendar Social Collector",
-  "version": "0.6.0",
-  "description": "Capture event-like Facebook and Instagram posts into Free Calendar.",
+  "version": "0.7.0",
+  "description": "Capture Facebook and Instagram posts into Free Calendar for AI event interpretation.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://www.facebook.com/*",
