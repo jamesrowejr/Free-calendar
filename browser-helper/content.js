@@ -5,6 +5,7 @@
   const EVENT_WORDS = /\b(event|festival|concert|show|meet|meetup|cars?\s*(?:&|and)\s*coffee|cruise[- ]?in|autocross|birthday|debut|baby|feeding|keeper talk|open house|grand opening|free|admission|tickets?|party|market|movie|tour|demo|giveaway|beer|food|music|Saturday|Sunday|Monday|Tuesday|Wednesday|Thursday|Friday)\b/i;
   const DATE_WORDS = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b|\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b|\b(today|tomorrow|tonight|this weekend|next weekend)\b/i;
   const TIME_WORDS = /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/i;
+  const KNOWN_FACEBOOK_SOURCES = /facebook\.com\/(?:groups\/(?:316078618596260|SavannahCarsandCoffee|1200333740045202|615436512284543|GeorgetownCommunitySavannah|439903816814025)|OatlandIsland)(?:[/?#]|$)/i;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -78,7 +79,6 @@
       let text = (article.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
       if (text.length < 35 || text.length > 50000) continue;
       const strongSignal = EVENT_WORDS.test(text) || DATE_WORDS.test(text) || TIME_WORDS.test(text) || /\bfree\b/i.test(text);
-      // On a page/group the user deliberately chose to scan, image-bearing posts are valuable evidence too.
       if (!strongSignal && !media.length) continue;
       const postUrl = canonicalPostUrl(article, platform);
       const key = postUrl || `${text.slice(0, 700)}|${media[0]?.url || ''}`;
@@ -110,6 +110,14 @@
     return {captures: [...all.values()].slice(0, 100), expanded, deep: true};
   }
 
+  async function autoCollect() {
+    if (!KNOWN_FACEBOOK_SOURCES.test(location.href)) return;
+    expandSeeMore();
+    await sleep(350);
+    const result = scan();
+    if (result.captures?.length) chrome.runtime.sendMessage({type:'FREECAL_AUTO_UPLOAD', captures:result.captures.slice(0,40)}).catch(()=>{});
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'FREECAL_EXPAND') { sendResponse({expanded: expandSeeMore()}); return; }
     if (msg?.type === 'FREECAL_SCAN') { sendResponse(scan()); return; }
@@ -118,4 +126,7 @@
       return true;
     }
   });
+
+  setTimeout(autoCollect, 10000);
+  setInterval(autoCollect, 120000);
 })();
