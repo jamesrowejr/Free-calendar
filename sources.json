@@ -1,10 +1,52 @@
 [
-  {"id":"facebook_savannah_cars_coffee","name":"Savannah Cars & Coffee Facebook","type":"facebook","tier":1},
-  {"id":"facebook_oatland_island","name":"Oatland Island Wildlife Center Facebook","type":"facebook","tier":1},
-  {"id":"savannah_city","name":"City of Savannah","type":"official","tier":1},
-  {"id":"visit_savannah","name":"Visit Savannah","type":"calendar","tier":1},
-  {"id":"visit_tybee","name":"Visit Tybee","type":"calendar","tier":1},
-  {"id":"visit_pooler","name":"Visit Pooler","type":"calendar","tier":1},
-  {"id":"savannah_master_calendar","name":"Savannah Master Calendar","type":"calendar","tier":1},
-  {"id":"wtoc","name":"WTOC Community","type":"news","tier":1}
+  {
+    "id":"oatland_calendar",
+    "name":"Oatland Island Wildlife Center Calendar",
+    "type":"official",
+    "tier":1,
+    "interest":"animals",
+    "url":"https://oatland.sccpss.com/oatland-calendar",
+    "discover":true,
+    "watch_terms":["birthday","baby","new arrival","debut","gender reveal","name reveal","keeper talk","animal encounter","feeding","hatching","goat","wolf","sloth","otter","cougar","barnyard"]
+  },
+  {
+    "id":"oatland_news",
+    "name":"Oatland Island Wildlife Center News",
+    "type":"official",
+    "tier":1,
+    "interest":"animals",
+    "url":"https://oatland.sccpss.com/news",
+    "discover":true,
+    "watch_terms":["baby","new arrival","debut","birthday","gender reveal","name reveal","barnyard","goat","wolf","sloth","otter","cougar"]
+  },
+  {
+    "id":"friends_oatland_events",
+    "name":"Friends of Oatland Events",
+    "type":"official",
+    "tier":1,
+    "interest":"animals",
+    "url":"https://www.friendsofoatland.org/events",
+    "discover":true,
+    "watch_terms":["birthday","baby","new arrival","debut","animal","wildlife","keeper","feeding"]
+  },
+  {
+    "id":"friends_oatland_updates",
+    "name":"Friends of Oatland Animal Updates",
+    "type":"official",
+    "tier":1,
+    "interest":"animals",
+    "url":"https://www.friendsofoatland.org/blog/categories/animal-updates",
+    "discover":true,
+    "watch_terms":["birthday","baby","new arrival","debut","baby shower","cub","pup","calf","kid","hatching"]
+  },
+  {"id":"savannah_city","name":"City of Savannah","type":"official","tier":1,"url":"https://savannahga.gov/calendar.aspx","discover":true},
+  {"id":"visit_savannah","name":"Visit Savannah","type":"calendar","tier":1,"url":"https://www.visitsavannah.com/events","discover":true},
+  {"id":"visit_tybee","name":"Visit Tybee","type":"calendar","tier":1,"url":"https://visittybee.com/events","discover":true},
+  {"id":"visit_pooler","name":"Visit Pooler","type":"calendar","tier":1,"url":"https://www.visitpooler.com/events/","discover":true},
+  {"id":"savannah_master_calendar","name":"Savannah Master Calendar","type":"calendar","tier":1,"url":"https://savannahmastercalendar.com/","discover":true},
+  {"id":"wtoc","name":"WTOC Community","type":"news","tier":1,"url":"https://www.wtoc.com/community/","discover":true},
+  {"id":"ships_sea","name":"Ships of the Sea Maritime Museum","type":"official","tier":1,"url":"https://www.shipsofthesea.org/events","discover":true},
+  {"id":"eastern_wharf","name":"Eastern Wharf Events","type":"official","tier":1,"url":"https://easternwharf.com/events/","discover":true},
+  {"id":"facebook_savannah_cars_coffee","name":"Savannah Cars & Coffee Facebook","type":"facebook","tier":1,"enabled":false},
+  {"id":"facebook_oatland_island","name":"Oatland Island Wildlife Center Facebook","type":"facebook","tier":1,"enabled":false}
 ]
