@@ -17,7 +17,7 @@ The calendar favors unusually good value and genuinely interesting experiences, 
 Home base: Savannah, GA. Rough radius: about 60 minutes driving.
 High-interest examples: car shows/cruise-ins/Cars & Coffee/autocross, animal births/birthdays/debuts/feedings/keeper talks, free museum days, unusual tours, live music, festivals, open houses, grand openings, community events with free food/drinks/giveaways, quirky local events.
 Low-interest examples unless exceptional: routine meetings, generic networking, ordinary classes/workshops, repetitive farmers markets.
-Important: distinguish the Facebook/Instagram POST DATE from the EVENT DATE. Never treat an old historical post as a future event.
+Important: distinguish the Facebook/Instagram POST DATE from the EVENT DATE. Never treat an old historical post as a future event. Images may be flyers and can contain the best event details.
 Return ONLY one valid JSON object. No markdown.
 Schema:
 {
@@ -61,13 +61,32 @@ def _extract_json(text: str) -> dict:
         return json.loads(match.group(0))
 
 
+def _request(api_key: str, user_content: list[dict]) -> dict:
+    body = {
+        "model": MODEL,
+        "input": [
+            {"role": "system", "content": [{"type": "input_text", "text": SYSTEM}]},
+            {"role": "user", "content": user_content},
+        ],
+        "max_output_tokens": 1400,
+    }
+    req = Request(OPENAI_URL, data=json.dumps(body).encode("utf-8"), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
+    with urlopen(req, timeout=55) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def analyze_capture(capture: dict, api_key: str) -> dict:
     media = capture.get("media") or []
     media_summary = []
-    for item in media[:8]:
+    image_urls = []
+    for item in media[:10]:
         if not isinstance(item, dict):
             continue
-        media_summary.append({"type": item.get("type"), "alt": item.get("alt", "")[:1200], "url": item.get("url", "")[:1200]})
+        url = str(item.get("url") or "")
+        alt = str(item.get("alt") or "")
+        media_summary.append({"type": item.get("type"), "alt": alt[:1600], "url": url[:1600]})
+        if url.startswith("https://") and len(image_urls) < 2 and not any(x in url.lower() for x in ("emoji", "profile")):
+            image_urls.append(url)
     user_text = {
         "today": datetime.now().astimezone().isoformat(),
         "platform": capture.get("platform"),
@@ -77,19 +96,20 @@ def analyze_capture(capture: dict, api_key: str) -> dict:
         "post_text": capture.get("text", "")[:30000],
         "media_metadata": media_summary,
     }
-    body = {
-        "model": MODEL,
-        "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": SYSTEM}]},
-            {"role": "user", "content": [{"type": "input_text", "text": json.dumps(user_text, ensure_ascii=False)}]},
-        ],
-        "max_output_tokens": 1400,
-    }
-    req = Request(OPENAI_URL, data=json.dumps(body).encode("utf-8"), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=55) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    text_item = {"type": "input_text", "text": json.dumps(user_text, ensure_ascii=False)}
+    content = [text_item] + [{"type": "input_image", "image_url": url} for url in image_urls]
+    try:
+        payload = _request(api_key, content)
+    except HTTPError:
+        # Social CDN images sometimes require browser cookies. If OpenAI cannot fetch them,
+        # retry with the full post text + image alt metadata instead of dropping the capture.
+        if image_urls:
+            payload = _request(api_key, [text_item])
+        else:
+            raise
     result = _extract_json(_output_text(payload))
     result["model"] = MODEL
+    result["image_count"] = len(image_urls)
     return result
 
 
@@ -146,8 +166,8 @@ def process_pending_social(storage, limit=8):
         try:
             analysis = analyze_capture(capture, api_key)
             event = event_from_analysis(capture, analysis)
-            published = bool(event and not analysis.get("needs_review") and storage.upsert_event(event))
             if event and not analysis.get("needs_review"):
+                storage.upsert_event(event)
                 storage.mark_social_analysis(capture["id"], "published", analysis, event_id=event["id"])
                 stats["published"] += 1
             else:
