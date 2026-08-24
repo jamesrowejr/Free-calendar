@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -36,6 +37,9 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS signals (id TEXT PRIMARY KEY,source_id TEXT NOT NULL,title TEXT NOT NULL,excerpt TEXT NOT NULL,url TEXT NOT NULL,kind TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_signals_last_seen ON signals(last_seen DESC);
                 CREATE TABLE IF NOT EXISTS source_status (source_id TEXT PRIMARY KEY,last_checked TEXT,last_success TEXT,status TEXT NOT NULL DEFAULT 'never',detail TEXT,events_found INTEGER NOT NULL DEFAULT 0,signals_found INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS social_captures (id TEXT PRIMARY KEY,platform TEXT NOT NULL,source_url TEXT NOT NULL,post_url TEXT,source_name TEXT,text TEXT NOT NULL,media_json TEXT NOT NULL DEFAULT '[]',captured_at TEXT NOT NULL,last_seen TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new');
+                CREATE INDEX IF NOT EXISTS idx_social_last_seen ON social_captures(last_seen DESC);
+                CREATE INDEX IF NOT EXISTS idx_social_status ON social_captures(status);
             """)
 
     def seed_events(self, seed_path: Path):
@@ -65,7 +69,6 @@ class Storage:
         return True
 
     def list_events(self):
-        # The calendar is a planning tool, not an archive. Never surface expired rows.
         today=datetime.now().astimezone().date().isoformat()
         with self.connect() as conn: rows=conn.execute("SELECT payload FROM events WHERE start_date>=? ORDER BY start_date,title_key",(today,)).fetchall()
         return [json.loads(row["payload"]) for row in rows]
@@ -77,10 +80,23 @@ class Storage:
         return not bool(exists)
 
     def list_signals(self,limit=30):
-        # Signals are leads. If a page stops mentioning one, it should age out quickly.
         cutoff=(datetime.now(timezone.utc)-timedelta(days=14)).isoformat()
         with self.connect() as conn: rows=conn.execute("SELECT * FROM signals WHERE last_seen>=? ORDER BY last_seen DESC LIMIT ?",(cutoff,int(limit))).fetchall()
         return [dict(row) for row in rows]
+
+    def save_social_capture(self,capture:dict):
+        platform=str(capture.get("platform") or "").lower().strip(); source_url=str(capture.get("source_url") or "").strip(); post_url=str(capture.get("post_url") or "").strip(); text=str(capture.get("text") or "").strip(); source_name=str(capture.get("source_name") or "").strip(); media=capture.get("media") if isinstance(capture.get("media"),list) else []
+        if platform not in {"facebook","instagram"} or not source_url or len(text)<12: return {"saved":False,"reason":"invalid"}
+        key=post_url or (source_url+"|"+text[:1200]); capture_id=hashlib.sha256(key.encode("utf-8",errors="ignore")).hexdigest()[:32]; ts=now_iso()
+        with self.connect() as conn:
+            exists=conn.execute("SELECT id FROM social_captures WHERE id=?",(capture_id,)).fetchone()
+            conn.execute("INSERT INTO social_captures(id,platform,source_url,post_url,source_name,text,media_json,captured_at,last_seen,status) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,text=CASE WHEN length(excluded.text)>length(social_captures.text) THEN excluded.text ELSE social_captures.text END,media_json=excluded.media_json",(capture_id,platform,source_url,post_url or None,source_name or None,text[:50000],json.dumps(media[:20],ensure_ascii=False),ts,ts,"new"))
+        return {"saved":not bool(exists),"duplicate":bool(exists),"id":capture_id}
+
+    def social_stats(self):
+        with self.connect() as conn:
+            total=conn.execute("SELECT COUNT(*) AS n FROM social_captures").fetchone()["n"]; new=conn.execute("SELECT COUNT(*) AS n FROM social_captures WHERE status='new'").fetchone()["n"]; last=conn.execute("SELECT max(last_seen) AS ts FROM social_captures").fetchone()["ts"]
+        return {"captures":total,"new":new,"last_capture":last}
 
     def update_source_status(self,source_id:str,status:str,detail="",events_found=0,signals_found=0):
         checked=now_iso(); success=checked if status=="ok" else None
@@ -94,4 +110,4 @@ class Storage:
     def stats(self):
         with self.connect() as conn:
             events=conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]; signals=conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]; checked=conn.execute("SELECT COUNT(*) AS n FROM source_status WHERE last_checked IS NOT NULL").fetchone()["n"]
-        return {"events":events,"signals":signals,"sources_checked":checked,"db_path":str(self.db_path)}
+        return {"events":events,"signals":signals,"sources_checked":checked,"db_path":str(self.db_path),"social":self.social_stats()}
