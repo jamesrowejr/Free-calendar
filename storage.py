@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -21,6 +22,7 @@ class Storage:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._purge_stale_signals()
 
     def connect(self):
         conn = sqlite3.connect(self.db_path, timeout=20)
@@ -44,6 +46,20 @@ class Storage:
                 CREATE INDEX IF NOT EXISTS idx_social_analysis_status ON social_analysis(status);
             """)
 
+    @staticmethod
+    def _signal_is_current(signal: dict) -> bool:
+        current_year=datetime.now().astimezone().year
+        text=f"{signal.get('title','')} {signal.get('excerpt','')}"
+        years=[int(y) for y in re.findall(r"\b(20\d{2})\b",text)]
+        return not years or max(years)>=current_year
+
+    def _purge_stale_signals(self):
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=14)).isoformat()
+        with self.connect() as conn:
+            rows=conn.execute("SELECT id,title,excerpt,last_seen FROM signals").fetchall()
+            stale=[r["id"] for r in rows if r["last_seen"]<cutoff or not self._signal_is_current(dict(r))]
+            if stale: conn.executemany("DELETE FROM signals WHERE id=?",[(x,) for x in stale])
+
     def seed_events(self, seed_path: Path):
         if not seed_path.exists(): return
         try: rows=json.loads(seed_path.read_text(encoding="utf-8"))
@@ -58,6 +74,7 @@ class Storage:
         event=dict(event); event_id=str(event.get("id") or "").strip()
         if not event_id or not event.get("start") or not event.get("title"): return False
         title_key=self.title_key(event["title"]); start_date=str(event["start"])[:10]
+        if start_date < datetime.now().astimezone().date().isoformat(): return False
         with self.connect() as conn:
             existing=conn.execute("SELECT id,payload FROM events WHERE start_date=? AND title_key=? LIMIT 1",(start_date,title_key)).fetchone()
             if existing and existing["id"]!=event_id:
@@ -77,15 +94,16 @@ class Storage:
         return [json.loads(row["payload"]) for row in rows]
 
     def upsert_signal(self,signal:dict):
+        if not self._signal_is_current(signal): return False
         with self.connect() as conn:
             exists=conn.execute("SELECT id FROM signals WHERE id=?",(signal["id"],)).fetchone()
             conn.execute("INSERT INTO signals(id,source_id,title,excerpt,url,kind,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,excerpt=excluded.excerpt,title=excluded.title",(signal["id"],signal["source_id"],signal["title"],signal["excerpt"],signal["url"],signal.get("kind","special-interest"),signal.get("first_seen",now_iso()),now_iso()))
         return not bool(exists)
 
     def list_signals(self,limit=30):
-        cutoff=(datetime.now(timezone.utc)-timedelta(days=14)).isoformat()
+        self._purge_stale_signals(); cutoff=(datetime.now(timezone.utc)-timedelta(days=14)).isoformat()
         with self.connect() as conn: rows=conn.execute("SELECT * FROM signals WHERE last_seen>=? ORDER BY last_seen DESC LIMIT ?",(cutoff,int(limit))).fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows if self._signal_is_current(dict(row))]
 
     def save_social_capture(self,capture:dict):
         platform=str(capture.get("platform") or "").lower().strip(); source_url=str(capture.get("source_url") or "").strip(); post_url=str(capture.get("post_url") or "").strip(); text=str(capture.get("text") or "").strip(); source_name=str(capture.get("source_name") or "").strip(); media=capture.get("media") if isinstance(capture.get("media"),list) else []
@@ -97,8 +115,7 @@ class Storage:
         return {"saved":not bool(exists),"duplicate":bool(exists),"id":capture_id}
 
     def pending_social_captures(self,limit=8):
-        with self.connect() as conn:
-            rows=conn.execute("SELECT * FROM social_captures WHERE status='new' ORDER BY captured_at ASC LIMIT ?",(int(limit),)).fetchall()
+        with self.connect() as conn: rows=conn.execute("SELECT * FROM social_captures WHERE status='new' ORDER BY captured_at ASC LIMIT ?",(int(limit),)).fetchall()
         out=[]
         for row in rows:
             item=dict(row)
@@ -114,8 +131,7 @@ class Storage:
             conn.execute("INSERT INTO social_analysis(capture_id,status,result_json,event_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(capture_id) DO UPDATE SET status=excluded.status,result_json=excluded.result_json,event_id=excluded.event_id,updated_at=excluded.updated_at",(capture_id,status,json.dumps(result,ensure_ascii=False),event_id,ts))
 
     def list_social_analysis(self,limit=30):
-        with self.connect() as conn:
-            rows=conn.execute("SELECT a.capture_id,a.status,a.result_json,a.event_id,a.updated_at,c.platform,c.source_name,c.source_url,c.post_url FROM social_analysis a JOIN social_captures c ON c.id=a.capture_id ORDER BY a.updated_at DESC LIMIT ?",(int(limit),)).fetchall()
+        with self.connect() as conn: rows=conn.execute("SELECT a.capture_id,a.status,a.result_json,a.event_id,a.updated_at,c.platform,c.source_name,c.source_url,c.post_url FROM social_analysis a JOIN social_captures c ON c.id=a.capture_id ORDER BY a.updated_at DESC LIMIT ?",(int(limit),)).fetchall()
         out=[]
         for row in rows:
             item=dict(row)
@@ -126,21 +142,17 @@ class Storage:
 
     def social_stats(self):
         with self.connect() as conn:
-            total=conn.execute("SELECT COUNT(*) AS n FROM social_captures").fetchone()["n"]
-            counts={row["status"]:row["n"] for row in conn.execute("SELECT status,COUNT(*) AS n FROM social_captures GROUP BY status").fetchall()}
-            last=conn.execute("SELECT max(last_seen) AS ts FROM social_captures").fetchone()["ts"]
+            total=conn.execute("SELECT COUNT(*) AS n FROM social_captures").fetchone()["n"]; counts={row["status"]:row["n"] for row in conn.execute("SELECT status,COUNT(*) AS n FROM social_captures GROUP BY status").fetchall()}; last=conn.execute("SELECT max(last_seen) AS ts FROM social_captures").fetchone()["ts"]
         return {"captures":total,"new":counts.get("new",0),"published":counts.get("published",0),"review":counts.get("review",0),"ignored":counts.get("ignored",0),"errors":counts.get("error",0),"last_capture":last}
 
     def update_source_status(self,source_id:str,status:str,detail="",events_found=0,signals_found=0):
         checked=now_iso(); success=checked if status=="ok" else None
-        with self.connect() as conn:
-            conn.execute("INSERT INTO source_status(source_id,last_checked,last_success,status,detail,events_found,signals_found) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET last_checked=excluded.last_checked,last_success=CASE WHEN excluded.status='ok' THEN excluded.last_success ELSE source_status.last_success END,status=excluded.status,detail=excluded.detail,events_found=excluded.events_found,signals_found=excluded.signals_found",(source_id,checked,success,status,detail[:500],int(events_found),int(signals_found)))
+        with self.connect() as conn: conn.execute("INSERT INTO source_status(source_id,last_checked,last_success,status,detail,events_found,signals_found) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET last_checked=excluded.last_checked,last_success=CASE WHEN excluded.status='ok' THEN excluded.last_success ELSE source_status.last_success END,status=excluded.status,detail=excluded.detail,events_found=excluded.events_found,signals_found=excluded.signals_found",(source_id,checked,success,status,detail[:500],int(events_found),int(signals_found)))
 
     def source_statuses(self):
         with self.connect() as conn: rows=conn.execute("SELECT * FROM source_status ORDER BY source_id").fetchall()
         return [dict(row) for row in rows]
 
     def stats(self):
-        with self.connect() as conn:
-            events=conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]; signals=conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]; checked=conn.execute("SELECT COUNT(*) AS n FROM source_status WHERE last_checked IS NOT NULL").fetchone()["n"]
+        with self.connect() as conn: events=conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]; signals=conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]; checked=conn.execute("SELECT COUNT(*) AS n FROM source_status WHERE last_checked IS NOT NULL").fetchone()["n"]
         return {"events":events,"signals":signals,"sources_checked":checked,"db_path":str(self.db_path),"social":self.social_stats()}
