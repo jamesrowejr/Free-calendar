@@ -98,7 +98,7 @@ class Storage:
 
     def pending_social_captures(self,limit=8):
         with self.connect() as conn:
-            rows=conn.execute("SELECT * FROM social_captures WHERE status IN ('new','error') ORDER BY captured_at ASC LIMIT ?",(int(limit),)).fetchall()
+            rows=conn.execute("SELECT * FROM social_captures WHERE status='new' ORDER BY captured_at ASC LIMIT ?",(int(limit),)).fetchall()
         out=[]
         for row in rows:
             item=dict(row)
