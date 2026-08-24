@@ -1,0 +1,30 @@
+name: Free Calendar CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile backend
+        run: python -m py_compile server.py storage.py discovery.py
+      - name: Smoke-test storage
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from storage import Storage
+          with TemporaryDirectory() as d:
+              s = Storage(Path(d) / 'test.sqlite3')
+              s.seed_events(Path('data/events.json'))
+              assert len(s.list_events()) >= 1
+              assert s.stats()['events'] >= 1
+              print(s.stats())
+          PY
