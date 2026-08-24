@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from discovery import run_discovery, start_background_discovery
+from social_ai import process_pending_social, start_social_worker
 from storage import Storage
 
 ROOT = Path(__file__).resolve().parent
@@ -63,7 +64,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/health":
-            return self.json_response({"ok": True, "service": "free-calendar", "version": "hosted-0.6", "storage": STORE.stats()})
+            return self.json_response({"ok": True, "service": "free-calendar", "version": "hosted-0.7", "storage": STORE.stats(), "social_ai": {"enabled": bool(os.environ.get("OPENAI_API_KEY")), "model": os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")}})
         if path == "/api/events":
             return self.json_response(STORE.list_events())
         if path == "/api/sources":
@@ -71,14 +72,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response([{**source, "health": statuses.get(source.get("id"))} for source in SOURCES])
         if path == "/api/signals":
             return self.json_response(STORE.list_signals())
+        if path == "/api/social/analysis":
+            return self.json_response(STORE.list_social_analysis())
         if path == "/api/status":
-            return self.json_response({"storage": STORE.stats(), "sources": STORE.source_statuses(), "social": STORE.social_stats()})
+            return self.json_response({"storage": STORE.stats(), "sources": STORE.source_statuses(), "social": STORE.social_stats(), "social_ai": {"enabled": bool(os.environ.get("OPENAI_API_KEY")), "model": os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")}})
         return super().do_GET()
 
     def do_POST(self):
         path = urlparse(self.path).path
         if path == "/api/discovery/run":
             return self.json_response(run_discovery(STORE, SOURCES))
+        if path == "/api/social/process":
+            return self.json_response(process_pending_social(STORE, limit=12))
         if path == "/api/social/capture":
             payload = self.read_json()
             if not isinstance(payload, dict):
@@ -89,7 +94,7 @@ class Handler(SimpleHTTPRequestHandler):
             results = [STORE.save_social_capture(row) for row in captures if isinstance(row, dict)]
             saved = sum(1 for row in results if row.get("saved"))
             duplicates = sum(1 for row in results if row.get("duplicate"))
-            return self.json_response({"ok": True, "received": len(results), "saved": saved, "duplicates": duplicates, "social": STORE.social_stats()})
+            return self.json_response({"ok": True, "received": len(results), "saved": saved, "duplicates": duplicates, "queued_for_ai": saved if os.environ.get("OPENAI_API_KEY") else 0, "social": STORE.social_stats(), "social_ai_enabled": bool(os.environ.get("OPENAI_API_KEY"))})
         return self.json_response({"error": "not found"}, 404)
 
 
@@ -98,6 +103,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     interval = int(os.environ.get("DISCOVERY_INTERVAL_SECONDS", "21600"))
     start_background_discovery(STORE, SOURCES, interval_seconds=interval)
-    print(f"Free Calendar hosted-0.6 → {host}:{port}")
+    start_social_worker(STORE)
+    print(f"Free Calendar hosted-0.7 → {host}:{port}")
     print(f"Persistent data → {STORE.db_path}")
+    print(f"Social AI → {'enabled' if os.environ.get('OPENAI_API_KEY') else 'waiting for OPENAI_API_KEY'} · {os.environ.get('OPENAI_MODEL', 'gpt-5.6-luna')}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
