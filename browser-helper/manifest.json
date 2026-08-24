@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Free Calendar Social Collector",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Capture Facebook and Instagram posts into Free Calendar for AI event interpretation.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
@@ -10,6 +10,10 @@
     "https://www.instagram.com/*",
     "https://instagram.com/*",
     "https://free-calendar-production.up.railway.app/*"
+  ],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {"matches": ["https://www.facebook.com/*", "https://facebook.com/*"], "js": ["content.js"], "run_at": "document_idle"}
   ],
   "action": {
     "default_popup": "popup.html",
