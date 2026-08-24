@@ -1,5 +1,9 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+runtime_data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 data/facebook_captures.jsonl
 data/inbox*.jsonl
