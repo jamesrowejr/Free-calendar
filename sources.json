@@ -1,0 +1,10 @@
+[
+  {"id":"facebook_savannah_cars_coffee","name":"Savannah Cars & Coffee Facebook","type":"facebook","tier":1},
+  {"id":"facebook_oatland_island","name":"Oatland Island Wildlife Center Facebook","type":"facebook","tier":1},
+  {"id":"savannah_city","name":"City of Savannah","type":"official","tier":1},
+  {"id":"visit_savannah","name":"Visit Savannah","type":"calendar","tier":1},
+  {"id":"visit_tybee","name":"Visit Tybee","type":"calendar","tier":1},
+  {"id":"visit_pooler","name":"Visit Pooler","type":"calendar","tier":1},
+  {"id":"savannah_master_calendar","name":"Savannah Master Calendar","type":"calendar","tier":1},
+  {"id":"wtoc","name":"WTOC Community","type":"news","tier":1}
+]
