@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
-USER_AGENT = "FreeCalendar/0.4 (+personal Savannah event indexer)"
+USER_AGENT = "FreeCalendar/0.5 (+personal Savannah event indexer)"
 ANIMAL_TERMS = [
     "baby", "new arrival", "debut", "birthday", "gender reveal", "name reveal",
     "keeper talk", "animal encounter", "feeding", "hatching", "cub", "pup",
@@ -18,6 +18,8 @@ ANIMAL_TERMS = [
     "wildlife", "barnyard", "adoption event"
 ]
 FREE_TERMS = ["free", "no cost", "complimentary", "free admission", "no admission"]
+CIVIC_SKIP_TERMS = ["city council", "commission meeting", "board meeting", "committee meeting", "neighborhood association meeting", "workshop", "planning commission", "authority meeting"]
+MONTH_RE = r"January|February|March|April|May|June|July|August|September|October|November|December"
 
 
 def fetch_text(url: str, timeout=18) -> str:
@@ -146,6 +148,77 @@ def normalize_jsonld_event(raw: dict, source: dict):
     }
 
 
+def parse_civic_date(segment: str):
+    date_match = re.search(rf"\b({MONTH_RE})\s+(\d{{1,2}}),\s+(20\d{{2}})", segment, re.I)
+    if not date_match:
+        return None, None
+    try:
+        date = datetime.strptime(date_match.group(0), "%B %d, %Y")
+    except ValueError:
+        return None, None
+    after = segment[date_match.end():date_match.end()+180]
+    times = re.findall(r"\b(\d{1,2}:\d{2}\s*[AP]M)\b", after, re.I)
+    start = date.strftime("%Y-%m-%dT00:00:00")
+    end = None
+    if times:
+        try:
+            st = datetime.strptime(times[0].upper().replace("  ", " "), "%I:%M %p")
+            start = date.strftime("%Y-%m-%d") + st.strftime("T%H:%M:00")
+            if len(times) > 1:
+                et = datetime.strptime(times[1].upper().replace("  ", " "), "%I:%M %p")
+                end = date.strftime("%Y-%m-%d") + et.strftime("T%H:%M:00")
+        except ValueError:
+            pass
+    return start, end
+
+
+def extract_civic_events(page: str, source: dict):
+    headings = list(re.finditer(r"<h[2-6][^>]*>(.*?)</h[2-6]>", page, re.I | re.S))
+    events = []
+    seen = set()
+    for i, match in enumerate(headings):
+        title = strip_tags(match.group(1)).strip(" -–—")
+        if not title or len(title) < 4 or len(title) > 180:
+            continue
+        lower_title = title.lower()
+        if any(term in lower_title for term in CIVIC_SKIP_TERMS):
+            continue
+        seg_end = headings[i+1].start() if i+1 < len(headings) else min(len(page), match.end()+2200)
+        segment_html = page[match.end():min(seg_end, match.end()+2200)]
+        segment = strip_tags(segment_html)
+        start, end = parse_civic_date(segment)
+        if not start:
+            continue
+        key = (title.lower(), start[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        location_match = re.search(r"(?:Location:|@)\s*([^|]{3,140}?)(?=\s+(?:More Details|Details|Description:|Category:|$))", segment, re.I)
+        location = location_match.group(1).strip() if location_match else "Location TBA"
+        description = segment[:600]
+        cost = 0 if any(term in f"{title} {description}".lower() for term in FREE_TERMS) else None
+        categories, score = categories_and_score(title, description)
+        if cost == 0:
+            score = min(score + 0.8, 9.9)
+        events.append({
+            "id": f"civic-{source['id']}-{slug(title)}-{start[:10]}",
+            "title": title,
+            "start": start,
+            "end": end,
+            "location": location,
+            "cost": cost,
+            "costLabel": "FREE" if cost == 0 else "Price unknown",
+            "score": round(score, 1),
+            "categories": categories,
+            "perks": [],
+            "confidence": "medium",
+            "description": description or "Indexed from an official municipal calendar.",
+            "sources": [{"name": source.get("name", "Official calendar"), "url": source.get("url")}],
+            "discoveredBy": "civic-calendar",
+        })
+    return events
+
+
 def find_special_signals(page: str, source: dict):
     text = strip_tags(page)
     lower = text.lower()
@@ -183,10 +256,16 @@ def run_source(storage, source: dict):
         page = fetch_text(url)
         events_count = 0
         signals_count = 0
+        candidates = []
         if source.get("discover", True):
-            for raw in extract_jsonld_events(page):
-                event = normalize_jsonld_event(raw, source)
-                if event and storage.upsert_event(event):
+            candidates.extend(filter(None, (normalize_jsonld_event(raw, source) for raw in extract_jsonld_events(page))))
+            if source.get("parser") == "civic":
+                candidates.extend(extract_civic_events(page, source))
+            unique = {}
+            for event in candidates:
+                unique[(event.get("title", "").lower(), str(event.get("start", ""))[:10])] = event
+            for event in unique.values():
+                if storage.upsert_event(event):
                     events_count += 1
         if source.get("watch_terms"):
             for signal in find_special_signals(page, source):
